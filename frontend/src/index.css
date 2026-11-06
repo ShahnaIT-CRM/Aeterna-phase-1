@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body { @apply bg-beige text-teal font-sans antialiased; }
+  h1, h2, h3 { @apply font-display; }
+  :focus-visible { @apply outline outline-2 outline-offset-2 outline-teal-light; }
+}
+
+@layer components {
+  .btn { @apply inline-flex items-center justify-center rounded-md bg-teal px-4 py-2 text-sm font-semibold text-beige transition hover:bg-teal-light disabled:opacity-50; }
+  .btn-outline { @apply inline-flex items-center justify-center rounded-md border border-teal px-4 py-2 text-sm font-semibold text-teal transition hover:bg-teal hover:text-beige disabled:opacity-50; }
+  .btn-danger { @apply text-sm font-semibold text-red-800 hover:underline; }
+  .input { @apply w-full rounded-md border border-beige-line bg-white/70 px-3 py-2 text-sm text-teal placeholder:text-teal-soft/70 focus:border-teal focus:outline-none; }
+  .card { @apply rounded-lg border border-beige-line bg-white/50 p-5; }
+  .label { @apply mb-1 block text-sm font-semibold; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
