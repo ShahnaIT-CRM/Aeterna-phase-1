@@ -18,5 +18,5 @@ class JobPostAdmin(admin.ModelAdmin):
 
 @admin.register(JobApplication)
 class JobApplicationAdmin(admin.ModelAdmin):
-    list_display = ["job", "teacher", "status", "applied_at"]
+    list_display = ["job", "teacher", "status", "match_score", "applied_at"]
     list_filter = ["status"]

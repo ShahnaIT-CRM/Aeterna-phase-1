@@ -1,6 +1,8 @@
 from django.db import models
 
-from accounts.models import EmploymentType, InstituteProfile, TeacherProfile
+from accounts.models import (
+    Certification, EmploymentType, InstituteProfile, Qualification, TeacherProfile,
+)
 
 
 class JobPost(models.Model):
@@ -91,14 +93,39 @@ class JobApplication(models.Model):
     teacher = models.ForeignKey(TeacherProfile, on_delete=models.CASCADE, related_name="applications")
     cover_letter = models.TextField(blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.APPLIED)
-    # Phase 2: filled by the AI matching engine (see jobs/matching.py)
+    # Phase 2: filled by the matching engine (see jobs/matching.py) when the teacher applies.
+    # match_breakdown stores the per-factor explanation so the institute can see why.
     match_score = models.FloatField(null=True, blank=True)
+    match_breakdown = models.JSONField(default=dict, blank=True)
+    # Phase 2 document auto-fill: the teacher's uploaded degrees/certificates, linked at apply time.
+    attached_qualifications = models.ManyToManyField(
+        Qualification, blank=True, related_name="job_applications"
+    )
+    attached_certifications = models.ManyToManyField(
+        Certification, blank=True, related_name="job_applications"
+    )
     applied_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-applied_at"]
         constraints = [models.UniqueConstraint(fields=["job", "teacher"], name="one_application_per_job")]
+
+    def attach_documents(self):
+        """Document auto-fill: link the teacher's degrees and certificates that have an uploaded file.
+
+        Entries with no file are skipped (nothing for the institute to open); they still appear in
+        the candidate's profile summary. Links are to the live records, so if the teacher later
+        deletes an entry it disappears from this application too.
+        """
+        t = self.teacher
+        quals = [
+            q for q in t.qualifications.all() if q.degree_certificate or q.marksheet
+        ]
+        certs = [c for c in t.certifications.all() if c.document]
+        self.attached_qualifications.set(quals)
+        self.attached_certifications.set(certs)
+        return len(quals), len(certs)
 
 
 class ApplicationAnswer(models.Model):

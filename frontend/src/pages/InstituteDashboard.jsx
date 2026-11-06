@@ -6,6 +6,8 @@ import {
   WORK_MODES, label, money,
 } from '../constants'
 import { salaryText } from './JobFeed'
+import InstituteAnalytics from './InstituteAnalytics'
+import { AttachedDocuments, MatchBadge, MatchBreakdown } from '../components/Match'
 
 const JOB_FIELDS = [
   { name: 'title', label: 'Job title', required: true, full: true, placeholder: 'PGT Physics' },
@@ -138,7 +140,7 @@ function Applicant({ a, onChanged }) {
     <li className="card">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="font-bold">{a.teacher_name}</p>
+          <p className="flex flex-wrap items-center gap-2 font-bold">{a.teacher_name} <MatchBadge score={a.match_score} /></p>
           <p className="text-sm text-teal-soft">{p?.headline} · {p?.total_experience_years} yrs · applied {new Date(a.applied_at).toLocaleDateString('en-IN')}</p>
         </div>
         <div className="flex items-center gap-3">
@@ -157,6 +159,8 @@ function Applicant({ a, onChanged }) {
           {p.subjects?.length > 0 && <p><b>Subjects:</b> {p.subjects.join(', ')}</p>}
           {p.skills?.length > 0 && <p><b>Skills:</b> {p.skills.join(', ')}</p>}
           {p.intro_video_url && <p><a className="underline" href={p.intro_video_url} target="_blank" rel="noreferrer">Watch introduction video</a></p>}
+          <MatchBreakdown breakdown={a.match_breakdown} />
+          <AttachedDocuments qualifications={a.attached_qualifications} certifications={a.attached_certifications} />
           {d.qualifications.length > 0 && (
             <div><b>Qualifications</b><ul className="mt-1 space-y-1">{d.qualifications.map((q) => (
               <li key={q.id}>{q.course}{q.specialization && `, ${q.specialization}`} · {q.university} · {q.year_of_passing} {q.marks && `· ${q.marks}`} <VerifyChip status={q.verification_status} />
@@ -178,11 +182,21 @@ function Applicant({ a, onChanged }) {
 function Applicants({ job, onBack }) {
   const [apps, setApps] = useState(null)
   const [err, setErr] = useState('')
-  useEffect(() => { api.get('/applications/', { params: { job: job.id } }).then((r) => setApps(r.data)).catch((x) => setErr(errMsg(x))) }, [job.id])
+  const [order, setOrder] = useState('-match_score')
+  useEffect(() => { api.get('/applications/', { params: { job: job.id, ordering: order } }).then((r) => setApps(r.data)).catch((x) => setErr(errMsg(x))) }, [job.id, order])
   return (
     <div className="space-y-4">
       <button className="text-sm font-semibold underline" onClick={onBack}>Back to jobs</button>
-      <h2 className="text-2xl font-bold">Applicants for {job.title}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-2xl font-bold">Applicants for {job.title}</h2>
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-semibold" htmlFor="ord">Sort by</label>
+          <select id="ord" className="input w-auto" value={order} onChange={(e) => setOrder(e.target.value)}>
+            <option value="-match_score">Best match</option>
+            <option value="-applied_at">Newest first</option>
+          </select>
+        </div>
+      </div>
       <Alert>{err}</Alert>
       {apps?.length === 0 && <p>No applications yet.</p>}
       <ul className="space-y-3">{apps?.map((a) => <Applicant key={a.id} a={a} />)}</ul>
@@ -285,7 +299,7 @@ export default function InstituteDashboard() {
   const [tab, setTab] = useState('jobs')
   const [editing, setEditing] = useState(null)
   const [version, setVersion] = useState(0)
-  const tabs = [['jobs', 'My jobs'], ['post', 'Post a job'], ['profile', 'Institute profile']]
+  const tabs = [['jobs', 'My jobs'], ['analytics', 'Analytics'], ['post', 'Post a job'], ['profile', 'Institute profile']]
   const go = (t) => { setEditing(null); setTab(t) }
 
   return (
@@ -297,6 +311,7 @@ export default function InstituteDashboard() {
         ))}
       </div>
       {tab === 'jobs' && <MyJobs key={version} onPost={() => go('post')} onEdit={(j) => { setEditing(j); setTab('post') }} />}
+      {tab === 'analytics' && <InstituteAnalytics />}
       {tab === 'post' && <JobForm key={editing?.id ?? 'new'} job={editing} onCancel={() => go('jobs')} onSaved={() => { setVersion((n) => n + 1); go('jobs') }} />}
       {tab === 'profile' && <InstituteProfile />}
     </div>

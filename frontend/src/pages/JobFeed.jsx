@@ -14,17 +14,27 @@ function ApplyModal({ job, onClose, onApplied }) {
   const [answers, setAnswers] = useState({})
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [docs, setDocs] = useState(null) // what will be auto-attached
+
+  useEffect(() => {
+    Promise.all([api.get('/teacher/qualifications/'), api.get('/teacher/certifications/')])
+      .then(([q, c]) => setDocs({
+        degrees: q.data.filter((x) => x.degree_certificate || x.marksheet).length,
+        certs: c.data.filter((x) => x.document).length,
+      }))
+      .catch(() => setDocs(null))
+  }, [])
 
   const submit = async (e) => {
     e.preventDefault()
     setBusy(true)
     setErr('')
     try {
-      await api.post(`/jobs/${job.id}/apply/`, {
+      const { data } = await api.post(`/jobs/${job.id}/apply/`, {
         cover_letter: cover,
         answers: job.questions.map((q) => ({ question: q.id, answer: answers[q.id] || '' })),
       })
-      onApplied(job.id)
+      onApplied(job.id, data.match_score)
     } catch (x) {
       setErr(errMsg(x))
     } finally {
@@ -36,6 +46,13 @@ function ApplyModal({ job, onClose, onApplied }) {
     <Modal title={`Apply: ${job.title}`} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <p className="text-sm text-teal-soft">Your profile, qualifications and certifications are shared with {job.institute_name} when you apply.</p>
+        {docs && (
+          <p className="rounded-md bg-beige-dark/60 px-3 py-2 text-sm">
+            {docs.degrees + docs.certs > 0
+              ? `We’ll attach your uploaded documents automatically: ${docs.degrees} degree or mark sheet file${docs.degrees === 1 ? '' : 's'} and ${docs.certs} certificate${docs.certs === 1 ? '' : 's'}.`
+              : 'You haven’t uploaded any degree or certificate files yet. Add them under My profile and they’ll be attached to future applications automatically.'}
+          </p>
+        )}
         <div>
           <label className="label" htmlFor="cl">Cover letter (optional)</label>
           <textarea id="cl" rows={5} className="input" value={cover} onChange={(e) => setCover(e.target.value)} />
@@ -82,10 +99,10 @@ export default function JobFeed() {
 
   const set = (k) => (e) => setFilters({ ...filters, [k]: e.target.value })
   const search = (e) => { e.preventDefault(); fetchPage(1, true) }
-  const applied = (id) => {
+  const applied = (id, score) => {
     setJobs((js) => js.map((j) => (j.id === id ? { ...j, has_applied: true } : j)))
     setApplying(null)
-    setFlash('Application sent. Track its status under My applications.')
+    setFlash(`Application sent${score != null ? ` (${Math.round(score)}% match)` : ''}. Track its status under My applications.`)
   }
 
   return (

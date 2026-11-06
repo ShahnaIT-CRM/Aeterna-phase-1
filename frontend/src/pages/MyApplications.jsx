@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import api, { errMsg } from '../api'
 import { Alert, Chip } from '../components/ui'
+import { MatchBadge } from '../components/Match'
 import { APP_STATUS, label } from '../constants'
 
 const STYLE = {
@@ -26,7 +27,10 @@ export default function MyApplications() {
             <h2 className="text-lg font-bold">{a.job_title}</h2>
             <p className="text-sm text-teal-soft">{a.institute_name}{a.job_city && ` · ${a.job_city}`} · applied {new Date(a.applied_at).toLocaleDateString('en-IN')}</p>
           </div>
-          <Chip className={STYLE[a.status]}>{label(APP_STATUS, a.status)}</Chip>
+          <div className="flex items-center gap-2">
+            <MatchBadge score={a.match_score} />
+            <Chip className={STYLE[a.status]}>{label(APP_STATUS, a.status)}</Chip>
+          </div>
         </article>
       ))}
     </div>

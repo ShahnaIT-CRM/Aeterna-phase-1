@@ -96,14 +96,23 @@ class ApplicationSerializer(serializers.ModelSerializer):
     teacher_name = serializers.CharField(source="teacher.full_name", read_only=True)
     answers = ApplicationAnswerSerializer(many=True, read_only=True)
     teacher_detail = serializers.SerializerMethodField()
+    match_breakdown = serializers.SerializerMethodField()
+    attached_qualifications = QualificationSerializer(many=True, read_only=True)
+    attached_certifications = CertificationSerializer(many=True, read_only=True)
 
     class Meta:
         model = JobApplication
         fields = [
             "id", "job_id", "job_title", "job_city", "institute_name", "teacher_id", "teacher_name",
             "status", "cover_letter", "match_score", "applied_at", "updated_at", "answers",
-            "teacher_detail",
+            "teacher_detail", "match_breakdown", "attached_qualifications", "attached_certifications",
         ]
+
+    def get_match_breakdown(self, obj):
+        """Why the score is what it is: institute only. Teachers just see the overall score."""
+        if self.context["request"].user.role != "institute":
+            return None
+        return obj.match_breakdown or None
 
     def get_teacher_detail(self, obj):
         """Full candidate profile — only shown to the institute that received the application."""

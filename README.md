@@ -59,10 +59,22 @@ Migrations run automatically on every deploy.
 | POST/PATCH/DELETE | `/api/jobs/` , `/api/jobs/{id}/` | institute |
 | POST | `/api/jobs/{id}/apply/` | teacher |
 | GET | `/api/applications/?job=` | teacher (own) / institute (received) |
-| PATCH | `/api/applications/{id}/` `{status}` | institute (ATS status) |
+| PATCH | `/api/applications/{id}/` `{status}` | institute (ATS status; emails the teacher on key changes) |
+| GET | `/api/applications/?job=&ordering=-match_score` | sort applicants by match score (or `applied_at`) |
+| GET | `/api/institute/analytics/` | institute: active jobs, total applications, breakdown by status, per-job table |
 
-## Deliberately left for Phase 2 (stubs in place)
-AI matching & culture fit (`jobs/matching.py`, `JobApplication.match_score`), blockchain certificate
-verification (`Qualification.blockchain_tx_hash`, `verification_status`), OTP verification for email/phone/WhatsApp,
-status notifications (`jobs/notifications.py`), secure non-downloadable intro video, auto-attach documents on apply,
+## Phase 2 (implemented)
+- **Matching** (`jobs/matching.py`): 0-100 score on apply = subject 40 + experience 25 + location 20 + salary 15.
+  Missing data scores neutral, not zero. The per-factor explanation is stored in `JobApplication.match_breakdown`
+  and shown to institutes only; teachers see the overall score.
+- **Notifications** (`jobs/notifications.py`): emails the teacher on shortlisted / interview / offered / hired / rejected.
+  Console backend by default; set `EMAIL_BACKEND` + `EMAIL_*` for SMTP. `viewed` and `bookmarked` never email.
+- **Analytics**: `GET /api/institute/analytics/` and the Analytics tab on the institute dashboard.
+- **Document auto-fill**: on apply, the teacher's degrees/mark sheets and certificates that have an uploaded file are
+  linked to the application (`attached_qualifications`, `attached_certifications`).
+- Existing Phase 1 applications: `python manage.py backfill_phase2`
+- Tests: `python manage.py test jobs`
+
+## Still to do
+Blockchain certificate verification, OTP verification for email/phone/WhatsApp, secure non-downloadable intro video,
 messaging, interview scheduler, micro-courses, mentorship, gig hub, landing-page carousels/stats, Boolean search.
