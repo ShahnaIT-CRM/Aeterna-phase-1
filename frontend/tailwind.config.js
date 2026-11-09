@@ -11,6 +11,13 @@ export default {
         display: ['Fraunces', 'Georgia', 'serif'],
         sans: ['"Source Sans 3"', 'system-ui', 'sans-serif'],
       },
+      // Landing page: infinite institute carousel (track holds two identical groups, so -50% loops seamlessly)
+      keyframes: {
+        marquee: { '0%': { transform: 'translateX(0)' }, '100%': { transform: 'translateX(-50%)' } },
+      },
+      animation: {
+        marquee: 'marquee 45s linear infinite',
+      },
     },
   },
   plugins: [],

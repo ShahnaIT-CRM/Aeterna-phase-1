@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth'
 import Layout from './components/Layout'
@@ -9,10 +10,22 @@ import InstituteDashboard from './pages/InstituteDashboard'
 import Courses from './pages/Courses'
 import CourseDetail from './pages/CourseDetail'
 
-function Home() {
-  const { user } = useAuth()
-  if (!user) return <Navigate to="/auth" replace />
-  return <Navigate to={user.role === 'institute' ? '/institute' : '/jobs'} replace />
+// Lazy-loaded so logged-in users never download framer-motion / landing assets.
+const LandingPage = lazy(() => import('./pages/LandingPage'))
+
+const dashboardFor = (user) => (user.role === 'institute' ? '/institute' : '/jobs')
+const Blank = () => <div className="min-h-screen bg-beige" aria-busy="true" />
+
+// "/" – public landing for visitors, straight to the right dashboard for signed-in users.
+function Root() {
+  const { user, loading } = useAuth()
+  if (loading) return <Blank />
+  if (user) return <Navigate to={dashboardFor(user)} replace />
+  return (
+    <Suspense fallback={<Blank />}>
+      <LandingPage />
+    </Suspense>
+  )
 }
 
 function Guard({ role, children }) {
@@ -26,9 +39,11 @@ function Guard({ role, children }) {
 export default function App() {
   return (
     <Routes>
+      {/* Full-bleed public pages (no Layout chrome) */}
+      <Route path="/" element={<Root />} />
       <Route path="/auth" element={<AuthPage />} />
+
       <Route element={<Layout />}>
-        <Route path="/" element={<Home />} />
         <Route path="/jobs" element={<Guard role="teacher"><JobFeed /></Guard>} />
         <Route path="/applications" element={<Guard role="teacher"><MyApplications /></Guard>} />
         <Route path="/courses" element={<Guard role="teacher"><Courses /></Guard>} />

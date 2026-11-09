@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { errMsg } from '../api'
 import { Alert } from '../components/ui'
@@ -7,8 +7,10 @@ import { Alert } from '../components/ui'
 export default function AuthPage() {
   const { user, loading, login, register } = useAuth()
   const nav = useNavigate()
-  const [mode, setMode] = useState('login')
-  const [role, setRole] = useState('teacher')
+  // The landing page deep-links here: /auth?mode=register&role=institute
+  const [params] = useSearchParams()
+  const [mode, setMode] = useState(params.get('mode') === 'register' ? 'register' : 'login')
+  const [role, setRole] = useState(params.get('role') === 'institute' ? 'institute' : 'teacher')
   const [f, setF] = useState({ email: '', password: '', first_name: '', last_name: '', institute_name: '' })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -33,7 +35,7 @@ export default function AuthPage() {
   return (
     <div className="mx-auto grid min-h-screen max-w-6xl items-center gap-12 px-4 py-10 md:grid-cols-2">
       <div>
-        <p className="font-display text-xl font-bold">Aeterna</p>
+        <Link to="/" className="font-display text-xl font-bold">Aeterna</Link>
         <h1 className="mt-6 text-4xl font-bold leading-tight md:text-5xl">Let’s brighten our youngsters’ future.</h1>
         <p className="mt-5 max-w-md text-lg leading-relaxed">
           Teachers build one profile and apply anywhere. Schools and colleges post openings and find the right faculty, from KG to PhD.
