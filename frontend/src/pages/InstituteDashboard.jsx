@@ -3,11 +3,14 @@ import api, { errMsg } from '../api'
 import { Alert, Chip, FileUpload, FormFields, VerifyChip, buildPayload } from '../components/ui'
 import {
   APP_STATUS, BOARDS, DESIGNATIONS, EMPLOYMENT_TYPES, INSTITUTE_TYPES, JOB_STATUS, SALARY_DISPLAY,
-  WORK_MODES, label, money,
+  WORK_MODES, fmtDateTime, label, money,
 } from '../constants'
 import { salaryText } from './JobFeed'
 import InstituteAnalytics from './InstituteAnalytics'
 import { AttachedDocuments, MatchBadge, MatchBreakdown } from '../components/Match'
+import { QualificationBadge } from '../components/BlockchainBadge'
+import { ScheduleInterviewModal } from '../components/Interviews'
+import IssueCredentials from './IssueCredentials'
 
 const JOB_FIELDS = [
   { name: 'title', label: 'Job title', required: true, full: true, placeholder: 'PGT Physics' },
@@ -117,6 +120,8 @@ function JobForm({ job, onSaved, onCancel }) {
 function Applicant({ a, onChanged }) {
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState(a.status)
+  const [interview, setInterview] = useState({ date: a.interview_date, details: a.interview_details })
+  const [scheduling, setScheduling] = useState(false)
   const [err, setErr] = useState('')
   const d = a.teacher_detail
   const p = d?.profile
@@ -130,6 +135,12 @@ function Applicant({ a, onChanged }) {
     } catch (x) {
       setErr(errMsg(x))
     }
+  }
+  const canSchedule = !['rejected', 'offered', 'hired'].includes(status)
+  const scheduled = (r) => {
+    setStatus(r.status)
+    setInterview({ date: r.interview_date, details: r.interview_details })
+    onChanged?.()
   }
   const toggle = () => {
     if (!open && status === 'applied') update('viewed')
@@ -145,13 +156,22 @@ function Applicant({ a, onChanged }) {
         </div>
         <div className="flex items-center gap-3">
           <label className="sr-only" htmlFor={`st${a.id}`}>Application status</label>
-          <select id={`st${a.id}`} className="input w-auto" value={status} onChange={(e) => update(e.target.value)}>
+          <select id={`st${a.id}`} className="input w-auto" value={status} onChange={(e) => (e.target.value === 'interview' ? setScheduling(true) : update(e.target.value))}>
             {APP_STATUS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
+          {canSchedule && <button className="btn-outline" onClick={() => setScheduling(true)}>{interview.date ? 'Reschedule interview' : 'Schedule interview'}</button>}
           <button className="text-sm font-semibold underline" onClick={toggle}>{open ? 'Hide profile' : 'View profile'}</button>
         </div>
       </div>
+      {status === 'interview' && <p className="mt-2 text-sm font-semibold">{interview.date ? `Interview: ${fmtDateTime(interview.date)}` : 'Interview stage: no date set yet'}</p>}
       <Alert>{err}</Alert>
+      {scheduling && (
+        <ScheduleInterviewModal
+          app={{ ...a, interview_date: interview.date, interview_details: interview.details }}
+          onClose={() => setScheduling(false)}
+          onScheduled={scheduled}
+        />
+      )}
       {open && d && (
         <div className="mt-4 space-y-4 border-t border-beige-line pt-4 text-sm">
           <p><b>Contact:</b> {p.email}{p.phone && ` · ${p.phone}`} · {[p.city, p.state].filter(Boolean).join(', ')}</p>
@@ -163,7 +183,7 @@ function Applicant({ a, onChanged }) {
           <AttachedDocuments qualifications={a.attached_qualifications} certifications={a.attached_certifications} />
           {d.qualifications.length > 0 && (
             <div><b>Qualifications</b><ul className="mt-1 space-y-1">{d.qualifications.map((q) => (
-              <li key={q.id}>{q.course}{q.specialization && `, ${q.specialization}`} · {q.university} · {q.year_of_passing} {q.marks && `· ${q.marks}`} <VerifyChip status={q.verification_status} />
+              <li key={q.id}>{q.course}{q.specialization && `, ${q.specialization}`} · {q.university} · {q.year_of_passing} {q.marks && `· ${q.marks}`} <QualificationBadge q={q} />
                 {q.marksheet && <> · <a className="underline" href={q.marksheet} target="_blank" rel="noreferrer">Mark sheet</a></>}
                 {q.degree_certificate && <> · <a className="underline" href={q.degree_certificate} target="_blank" rel="noreferrer">Certificate</a></>}</li>))}</ul></div>
           )}
@@ -299,7 +319,7 @@ export default function InstituteDashboard() {
   const [tab, setTab] = useState('jobs')
   const [editing, setEditing] = useState(null)
   const [version, setVersion] = useState(0)
-  const tabs = [['jobs', 'My jobs'], ['analytics', 'Analytics'], ['post', 'Post a job'], ['profile', 'Institute profile']]
+  const tabs = [['jobs', 'My jobs'], ['analytics', 'Analytics'], ['post', 'Post a job'], ['credentials', 'Issue credentials'], ['profile', 'Institute profile']]
   const go = (t) => { setEditing(null); setTab(t) }
 
   return (
@@ -313,6 +333,7 @@ export default function InstituteDashboard() {
       {tab === 'jobs' && <MyJobs key={version} onPost={() => go('post')} onEdit={(j) => { setEditing(j); setTab('post') }} />}
       {tab === 'analytics' && <InstituteAnalytics />}
       {tab === 'post' && <JobForm key={editing?.id ?? 'new'} job={editing} onCancel={() => go('jobs')} onSaved={() => { setVersion((n) => n + 1); go('jobs') }} />}
+      {tab === 'credentials' && <IssueCredentials />}
       {tab === 'profile' && <InstituteProfile />}
     </div>
   )

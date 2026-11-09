@@ -201,12 +201,35 @@ class Qualification(models.Model):
         max_length=10, choices=VerificationStatus.choices, default=VerificationStatus.PENDING
     )
     blockchain_tx_hash = models.CharField(max_length=128, blank=True)
+    # Phase 3: the issuing institute's official digital copy, anchored on the (mock) chain.
+    # The teacher's own uploads above are never touched by this flow.
+    issuer_document = models.FileField(upload_to="issued_credentials/", blank=True, null=True)
+    document_sha256 = models.CharField(max_length=64, blank=True)
+    blockchain_block = models.PositiveBigIntegerField(null=True, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(
+        "InstituteProfile", null=True, blank=True, on_delete=models.SET_NULL, related_name="issued_credentials"
+    )
 
     class Meta:
         ordering = ["-year_of_passing"]
 
     def __str__(self):
         return f"{self.course} ({self.year_of_passing})"
+
+    @property
+    def blockchain_verified(self):
+        """True only for degrees anchored by the issuing institute. An admin clicking 'verified' in
+        the Django admin sets verification_status but not a hash, so it does not earn this badge."""
+        return bool(self.blockchain_tx_hash) and self.verification_status == VerificationStatus.VERIFIED
+
+    def clear_blockchain_proof(self):
+        self.verification_status = VerificationStatus.PENDING
+        self.blockchain_tx_hash = ""
+        self.document_sha256 = ""
+        self.blockchain_block = None
+        self.verified_at = None
+        self.verified_by = None
 
 
 class Certification(models.Model):

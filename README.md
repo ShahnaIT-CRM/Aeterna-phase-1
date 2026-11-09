@@ -11,7 +11,9 @@ aeterna/
 │   ├── manage.py, requirements.txt
 │   ├── aeterna/          # settings, urls, wsgi
 │   ├── accounts/         # User, TeacherProfile, Qualification, Certification, EmploymentHistory, InstituteProfile
-│   └── jobs/             # JobPost, JobQuestion, JobApplication (+ matching.py / notifications.py Phase 2 stubs)
+│   ├── jobs/             # JobPost, JobQuestion, JobApplication, matching.py, notifications.py
+│   ├── lms/              # Phase 3: Course, Lesson, Enrollment (micro-courses)
+│   └── utils/            # Phase 3: blockchain.py (mock anchoring service)
 └── frontend/
     └── src/              # pages: AuthPage, TeacherProfile, JobFeed, MyApplications, InstituteDashboard
 ```
@@ -75,6 +77,38 @@ Migrations run automatically on every deploy.
 - Existing Phase 1 applications: `python manage.py backfill_phase2`
 - Tests: `python manage.py test jobs`
 
+## Phase 3 (implemented)
+- **Blockchain verification** (`utils/blockchain.py`, mock). A *verified* institute that is named as a teacher's
+  university sees that degree in **Institute dashboard → Issue credentials**, uploads its official PDF/image, and
+  gets a fake `0x…` transaction hash. The file's SHA-256 is real, so `GET /api/credentials/verify/{tx_hash}/`
+  can tell if the stored file was altered. The "Blockchain Verified" badge shows on the teacher's profile and on
+  applications. Editing the course/university/year of an anchored degree withdraws the proof.
+  Swap the body of `anchor_document` for a real provider later; nothing else changes.
+  Matching rule: `Qualification.university` must contain the institute's registered name (case-insensitive).
+- **Micro-courses** (`lms` app). Create courses and lessons in `/admin` (tick *Is published*), or run
+  `python manage.py seed_lms` for samples. Teachers browse at **/courses**, enroll, open lessons and mark them
+  complete; finishing every lesson completes the enrollment and earns the course's badge.
+  Lesson content is only sent to enrolled teachers.
+- **Interview scheduler.** `JobApplication.interview_date` + `interview_details`. Institutes use
+  **Schedule interview** on an applicant (choosing "Interview scheduled" in the status menu opens it too).
+  The teacher is emailed and sees it under **My applications → Upcoming interviews**.
+- Tests: `python manage.py test` (accounts, jobs, lms)
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/institute/credentials/` | institute: degrees naming it as the university |
+| POST | `/api/institute/credentials/{qualification_id}/issue/` (multipart `document`) | verified institute |
+| GET | `/api/credentials/verify/{tx_hash}/` | any signed-in user |
+| GET | `/api/lms/courses/`, `/api/lms/courses/{id}/` | signed in (lesson content: enrolled teachers only) |
+| POST | `/api/lms/courses/{id}/enroll/` | teacher |
+| GET | `/api/lms/enrollments/` | teacher (own) |
+| POST | `/api/lms/enrollments/{id}/complete-lesson/` `{lesson}` | teacher |
+| POST | `/api/applications/{id}/schedule-interview/` `{interview_date, interview_details?}` | institute (calling again reschedules) |
+| GET | `/api/applications/interviews/` | upcoming interviews (teacher: own, institute: theirs) |
+
+Upgrading from Phase 2: `python manage.py migrate` (adds `accounts.0002`, `jobs.0003`, `lms.0001`).
+
 ## Still to do
-Blockchain certificate verification, OTP verification for email/phone/WhatsApp, secure non-downloadable intro video,
-messaging, interview scheduler, micro-courses, mentorship, gig hub, landing-page carousels/stats, Boolean search.
+OTP verification for email/phone/WhatsApp, secure non-downloadable intro video,
+messaging, mentorship, gig hub, peer circles, landing-page carousels/stats, Boolean search, calendar-tool integration,
+showing earned course badges on teacher profiles.

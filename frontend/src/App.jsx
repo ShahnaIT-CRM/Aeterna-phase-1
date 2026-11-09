@@ -6,6 +6,8 @@ import JobFeed from './pages/JobFeed'
 import MyApplications from './pages/MyApplications'
 import TeacherProfile from './pages/TeacherProfile'
 import InstituteDashboard from './pages/InstituteDashboard'
+import Courses from './pages/Courses'
+import CourseDetail from './pages/CourseDetail'
 
 function Home() {
   const { user } = useAuth()
@@ -29,6 +31,8 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/jobs" element={<Guard role="teacher"><JobFeed /></Guard>} />
         <Route path="/applications" element={<Guard role="teacher"><MyApplications /></Guard>} />
+        <Route path="/courses" element={<Guard role="teacher"><Courses /></Guard>} />
+        <Route path="/courses/:id" element={<Guard role="teacher"><CourseDetail /></Guard>} />
         <Route path="/profile" element={<Guard role="teacher"><TeacherProfile /></Guard>} />
         <Route path="/institute" element={<Guard role="institute"><InstituteDashboard /></Guard>} />
         <Route path="*" element={<Navigate to="/" replace />} />

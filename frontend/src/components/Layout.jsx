@@ -16,6 +16,7 @@ export default function Layout() {
               <>
                 <NavLink to="/jobs" className={link}>Find jobs</NavLink>
                 <NavLink to="/applications" className={link}>My applications</NavLink>
+                <NavLink to="/courses" className={link}>Learn</NavLink>
                 <NavLink to="/profile" className={link}>My profile</NavLink>
               </>
             )}

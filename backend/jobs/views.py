@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Q
@@ -13,13 +14,17 @@ from accounts.permissions import IsInstitute, IsTeacher
 
 from .matching import compute_match_breakdown
 from .models import ApplicationAnswer, JobApplication, JobPost
-from .notifications import notify_status_change
+from .notifications import notify_interview_scheduled, notify_status_change
 from .serializers import (
     ApplicationSerializer, ApplicationStatusSerializer, ApplySerializer, JobSerializer,
+    ScheduleInterviewSerializer,
 )
 
 
 logger = logging.getLogger(__name__)
+
+# Interviews for the same candidate must be at least this far apart.
+INTERVIEW_SLOT = timedelta(minutes=60)
 
 
 class JobPagination(PageNumberPagination):
@@ -123,10 +128,10 @@ class ApplicationViewSet(
     """Teachers: their own applications. Institutes: applications to their jobs (+ status updates)."""
 
     serializer_class = ApplicationSerializer
-    http_method_names = ["get", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "head", "options"]  # POST only for schedule-interview
 
     def get_permissions(self):
-        if self.action == "partial_update":
+        if self.action in ("partial_update", "schedule_interview"):
             return [IsInstitute()]
         return [permissions.IsAuthenticated()]
 
@@ -160,6 +165,47 @@ class ApplicationViewSet(
         s.is_valid(raise_exception=True)
         s.save()
         notify_status_change(app, old_status=old_status)
+        return Response(ApplicationSerializer(app, context=self.get_serializer_context()).data)
+
+    @action(detail=False, methods=["get"])
+    def interviews(self, request):
+        """GET /api/applications/interviews/: upcoming interviews, soonest first (teacher: own; institute: theirs)."""
+        qs = self.get_queryset().filter(
+            status=JobApplication.Status.INTERVIEW, interview_date__gte=timezone.now()
+        ).order_by("interview_date")
+        return Response(ApplicationSerializer(qs, many=True, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="schedule-interview")
+    def schedule_interview(self, request, pk=None):
+        """POST /api/applications/{id}/schedule-interview/ {interview_date, interview_details?}.
+
+        Moves the application to "interview" and emails the teacher. Calling it again reschedules.
+        """
+        app = self.get_object()  # scoped to this institute's applications, so others get a 404
+        if app.status in (JobApplication.Status.REJECTED, JobApplication.Status.OFFERED, JobApplication.Status.HIRED):
+            raise serializers.ValidationError(
+                {"detail": f"Can't schedule an interview for an application that is {app.get_status_display().lower()}."}
+            )
+        s = ScheduleInterviewSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        when = s.validated_data["interview_date"]
+
+        clash = JobApplication.objects.filter(
+            teacher=app.teacher, status=JobApplication.Status.INTERVIEW,
+            interview_date__gt=when - INTERVIEW_SLOT, interview_date__lt=when + INTERVIEW_SLOT,
+        ).exclude(pk=app.pk)
+        if clash.exists():
+            raise serializers.ValidationError(
+                {"interview_date": "This candidate already has an interview around that time. Pick another slot."}
+            )
+
+        rescheduled = app.status == JobApplication.Status.INTERVIEW and app.interview_date is not None
+        with transaction.atomic():
+            app.status = JobApplication.Status.INTERVIEW
+            app.interview_date = when
+            app.interview_details = s.validated_data.get("interview_details", "")
+            app.save(update_fields=["status", "interview_date", "interview_details", "updated_at"])
+            notify_interview_scheduled(app, rescheduled=rescheduled)
         return Response(ApplicationSerializer(app, context=self.get_serializer_context()).data)
 
 

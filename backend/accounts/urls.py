@@ -16,5 +16,8 @@ urlpatterns = [
     path("auth/me/", views.MeView.as_view()),
     path("teacher/profile/", views.TeacherProfileView.as_view()),
     path("institute/profile/", views.InstituteProfileView.as_view()),
+    path("institute/credentials/", views.CredentialQueueView.as_view()),
+    path("institute/credentials/<int:pk>/issue/", views.IssueCredentialView.as_view()),
+    path("credentials/verify/<str:tx_hash>/", views.VerifyCredentialView.as_view()),
     path("", include(router.urls)),
 ]

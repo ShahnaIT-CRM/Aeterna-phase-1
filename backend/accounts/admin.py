@@ -27,9 +27,10 @@ class TeacherProfileAdmin(admin.ModelAdmin):
 
 @admin.register(Qualification)
 class QualificationAdmin(admin.ModelAdmin):
-    list_display = ["teacher", "course", "university", "year_of_passing", "verification_status"]
+    list_display = ["teacher", "course", "university", "year_of_passing", "verification_status", "blockchain_tx_hash"]
     list_filter = ["verification_status", "level"]
     list_editable = ["verification_status"]
+    readonly_fields = ["blockchain_tx_hash", "document_sha256", "blockchain_block", "verified_at", "verified_by"]
 
 
 @admin.register(Certification)

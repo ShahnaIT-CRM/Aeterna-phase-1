@@ -18,3 +18,4 @@ export const DESIGNATIONS = ['PGT', 'TGT', 'PRT', 'Assistant Professor', 'Associ
 export const label = (list, v) => list.find(([k]) => k === v)?.[1] ?? v
 export const money = (n) => (n == null || n === '' ? '' : '₹' + Number(n).toLocaleString('en-IN'))
 export const WORK_STATUS_STYLE = { employed: 'bg-blue-100 text-blue-900', open: 'bg-orange-100 text-orange-900', active: 'bg-green-100 text-green-900' }
+export const fmtDateTime = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short' }) : '')

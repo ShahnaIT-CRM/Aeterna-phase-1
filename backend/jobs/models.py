@@ -104,6 +104,10 @@ class JobApplication(models.Model):
     attached_certifications = models.ManyToManyField(
         Certification, blank=True, related_name="job_applications"
     )
+    # Phase 3: interview scheduler. Set through POST /api/applications/{id}/schedule-interview/.
+    # `interview_details` is where to go: a meeting link, room number or address.
+    interview_date = models.DateTimeField(null=True, blank=True)
+    interview_details = models.CharField(max_length=300, blank=True)
     applied_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

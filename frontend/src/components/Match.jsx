@@ -1,4 +1,5 @@
 import { Chip, VerifyChip } from './ui'
+import { QualificationBadge } from './BlockchainBadge'
 
 const tier = (s) => (s >= 75 ? 'bg-green-100 text-green-900' : s >= 50 ? 'bg-yellow-100 text-yellow-900' : 'bg-red-100 text-red-900')
 const FACTOR_LABELS = { subject: 'Subject', experience: 'Experience', location: 'Location', salary: 'Salary' }
@@ -47,7 +48,7 @@ export function AttachedDocuments({ qualifications = [], certifications = [] }) 
       <ul className="mt-1 space-y-1">
         {qualifications.map((q) => (
           <li key={`q${q.id}`}>
-            {q.course}{q.specialization && `, ${q.specialization}`} · {q.university} <VerifyChip status={q.verification_status} />
+            {q.course}{q.specialization && `, ${q.specialization}`} · {q.university} <QualificationBadge q={q} />
             {q.degree_certificate && <> · <FileLink href={q.degree_certificate}>Degree certificate</FileLink></>}
             {q.marksheet && <> · <FileLink href={q.marksheet}>Mark sheet</FileLink></>}
           </li>

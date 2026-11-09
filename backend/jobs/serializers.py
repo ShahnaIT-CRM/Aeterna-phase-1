@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from accounts.serializers import (
@@ -106,6 +107,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
             "id", "job_id", "job_title", "job_city", "institute_name", "teacher_id", "teacher_name",
             "status", "cover_letter", "match_score", "applied_at", "updated_at", "answers",
             "teacher_detail", "match_breakdown", "attached_qualifications", "attached_certifications",
+            "interview_date", "interview_details",
         ]
 
     def get_match_breakdown(self, obj):
@@ -132,3 +134,13 @@ class ApplicationStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobApplication
         fields = ["status"]
+
+
+class ScheduleInterviewSerializer(serializers.Serializer):
+    interview_date = serializers.DateTimeField()
+    interview_details = serializers.CharField(required=False, allow_blank=True, max_length=300)
+
+    def validate_interview_date(self, value):
+        if value <= timezone.now():
+            raise serializers.ValidationError("Pick a date and time in the future.")
+        return value

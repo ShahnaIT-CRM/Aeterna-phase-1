@@ -55,10 +55,26 @@ class TeacherProfileSerializer(serializers.ModelSerializer):
 
 
 class QualificationSerializer(serializers.ModelSerializer):
+    blockchain_verified = serializers.BooleanField(read_only=True)
+    verified_by_name = serializers.CharField(source="verified_by.name", read_only=True, default=None)
+
+    # Editing any of these after a degree was anchored would make the proof describe a different
+    # degree, so the proof is withdrawn and the issuer has to confirm again.
+    PROOF_FIELDS = ("level", "course", "specialization", "university", "year_of_passing")
+
     class Meta:
         model = Qualification
-        exclude = ["teacher"]
-        read_only_fields = ["verification_status", "blockchain_tx_hash"]
+        exclude = ["teacher", "issuer_document"]
+        read_only_fields = [
+            "verification_status", "blockchain_tx_hash", "document_sha256", "blockchain_block",
+            "verified_at", "verified_by",
+        ]
+
+    def update(self, instance, validated):
+        changed = any(f in validated and validated[f] != getattr(instance, f) for f in self.PROOF_FIELDS)
+        if changed and instance.blockchain_tx_hash:
+            instance.clear_blockchain_proof()
+        return super().update(instance, validated)
 
     def validate_year_of_passing(self, value):
         if value < 1950 or value > 2100:
@@ -98,3 +114,8 @@ class InstituteProfileSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "verification_status", "subscription_plan", "job_post_quota", "created_at",
         ]
+
+
+class IssuerCredentialSerializer(QualificationSerializer):
+    """What an issuing institute sees in its credentials queue."""
+    teacher_name = serializers.CharField(source="teacher.full_name", read_only=True)

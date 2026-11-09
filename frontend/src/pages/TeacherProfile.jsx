@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import api, { errMsg } from '../api'
+import { QualificationBadge } from '../components/BlockchainBadge'
 import { Alert, Chip, CrudSection, FileUpload, FormFields, VerifyChip, buildPayload } from '../components/ui'
 import {
   COURSE_TYPES, DESIGNATIONS, EMPLOYMENT_TYPES, GENDERS, GRADING, INSTITUTE_TYPES, NOTICE,
@@ -163,7 +164,7 @@ export default function TeacherProfile() {
           <>
             <p className="font-semibold">{q.course}{q.specialization && `, ${q.specialization}`}</p>
             <p className="text-teal-soft">{q.university} · {q.year_of_passing}{q.marks && ` · ${q.marks}`}</p>
-            <div className="mt-1"><VerifyChip status={q.verification_status} /></div>
+            <div className="mt-1"><QualificationBadge q={q} /></div>
           </>
         )}
       />

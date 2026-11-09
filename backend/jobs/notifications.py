@@ -9,6 +9,7 @@ import logging
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -80,3 +81,36 @@ def notify_status_change(application, old_status=None):
     if old_status is not None and old_status == application.status:
         return
     transaction.on_commit(lambda: _send(application.pk))
+
+
+def build_interview_email(application, rescheduled=False):
+    """(subject, body) for an interview invitation. The time is shown in the server timezone (IST)."""
+    when = timezone.localtime(application.interview_date).strftime("%A, %d %B %Y at %I:%M %p %Z")
+    job, inst = application.job.title, application.job.institute.name
+    verb = "rescheduled" if rescheduled else "scheduled"
+    lines = [
+        f"Hi {application.teacher.first_name},",
+        "",
+        f"{inst} has {verb} your interview for {job}.",
+        f"When: {when}",
+    ]
+    if application.interview_details:
+        lines.append(f"Where / how: {application.interview_details}")
+    lines += ["", f"See all your interviews: {settings.SITE_URL.rstrip('/')}/applications", "", "- The Aeterna team"]
+    return f"Interview {verb}: {job} at {inst}", "\n".join(lines)
+
+
+def _send_interview(application_id, rescheduled):
+    from .models import JobApplication
+
+    try:
+        app = JobApplication.objects.select_related("job__institute", "teacher__user").get(pk=application_id)
+        subject, body = build_interview_email(app, rescheduled)
+        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [app.teacher.user.email])
+    except Exception:
+        logger.exception("Could not send interview email for application %s", application_id)
+
+
+def notify_interview_scheduled(application, rescheduled=False):
+    """Email the teacher the interview time. Sent after commit; failures are logged, never raised."""
+    transaction.on_commit(lambda: _send_interview(application.pk, rescheduled))
