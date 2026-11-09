@@ -108,6 +108,7 @@ Migrations run automatically on every deploy.
 
 Upgrading from Phase 2: `python manage.py migrate` (adds `accounts.0002`, `jobs.0003`, `lms.0001`).
 
+
 ## Still to do
 OTP verification for email/phone/WhatsApp, secure non-downloadable intro video,
 messaging, mentorship, gig hub, peer circles, landing-page carousels/stats, Boolean search, calendar-tool integration,
