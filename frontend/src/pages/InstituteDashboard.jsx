@@ -8,9 +8,8 @@ import {
 import { salaryText } from './JobFeed'
 import InstituteAnalytics from './InstituteAnalytics'
 import { AttachedDocuments, MatchBadge, MatchBreakdown } from '../components/Match'
-import { QualificationBadge } from '../components/BlockchainBadge'
+import { QualificationBadge } from '../components/VerificationBadge'
 import { ScheduleInterviewModal } from '../components/Interviews'
-import IssueCredentials from './IssueCredentials'
 
 const JOB_FIELDS = [
   { name: 'title', label: 'Job title', required: true, full: true, placeholder: 'PGT Physics' },
@@ -183,7 +182,7 @@ function Applicant({ a, onChanged }) {
           <AttachedDocuments qualifications={a.attached_qualifications} certifications={a.attached_certifications} />
           {d.qualifications.length > 0 && (
             <div><b>Qualifications</b><ul className="mt-1 space-y-1">{d.qualifications.map((q) => (
-              <li key={q.id}>{q.course}{q.specialization && `, ${q.specialization}`} · {q.university} · {q.year_of_passing} {q.marks && `· ${q.marks}`} <QualificationBadge q={q} />
+              <li key={q.id}>{q.course}{q.specialization && `, ${q.specialization}`} · {q.university_name} · {q.year_of_passing} {q.marks && `· ${q.marks}`} <QualificationBadge q={q} />
                 {q.marksheet && <> · <a className="underline" href={q.marksheet} target="_blank" rel="noreferrer">Mark sheet</a></>}
                 {q.degree_certificate && <> · <a className="underline" href={q.degree_certificate} target="_blank" rel="noreferrer">Certificate</a></>}</li>))}</ul></div>
           )}
@@ -319,7 +318,7 @@ export default function InstituteDashboard() {
   const [tab, setTab] = useState('jobs')
   const [editing, setEditing] = useState(null)
   const [version, setVersion] = useState(0)
-  const tabs = [['jobs', 'My jobs'], ['analytics', 'Analytics'], ['post', 'Post a job'], ['credentials', 'Issue credentials'], ['profile', 'Institute profile']]
+  const tabs = [['jobs', 'My jobs'], ['analytics', 'Analytics'], ['post', 'Post a job'], ['profile', 'Institute profile']]
   const go = (t) => { setEditing(null); setTab(t) }
 
   return (
@@ -333,7 +332,6 @@ export default function InstituteDashboard() {
       {tab === 'jobs' && <MyJobs key={version} onPost={() => go('post')} onEdit={(j) => { setEditing(j); setTab('post') }} />}
       {tab === 'analytics' && <InstituteAnalytics />}
       {tab === 'post' && <JobForm key={editing?.id ?? 'new'} job={editing} onCancel={() => go('jobs')} onSaved={() => { setVersion((n) => n + 1); go('jobs') }} />}
-      {tab === 'credentials' && <IssueCredentials />}
       {tab === 'profile' && <InstituteProfile />}
     </div>
   )

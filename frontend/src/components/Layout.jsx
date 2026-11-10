@@ -1,5 +1,6 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
+import NotificationBell from './NotificationBell'
 
 const link = ({ isActive }) => `border-b-2 pb-1 text-sm font-semibold ${isActive ? 'border-teal-light' : 'border-transparent hover:border-teal-soft'}`
 
@@ -21,8 +22,10 @@ export default function Layout() {
               </>
             )}
             {user?.role === 'institute' && <NavLink to="/institute" className={link}>Institute dashboard</NavLink>}
+            {user?.role === 'university' && <NavLink to="/university" className={link}>Degree requests</NavLink>}
             {user && (
               <>
+                <NotificationBell />
                 <span className="text-sm text-teal-soft">{user.display_name}</span>
                 <button className="btn-outline" onClick={() => { logout(); nav('/auth') }}>Log out</button>
               </>

@@ -10,10 +10,11 @@ aeterna/
 ├── backend/
 │   ├── manage.py, requirements.txt
 │   ├── aeterna/          # settings, urls, wsgi
-│   ├── accounts/         # User, TeacherProfile, Qualification, Certification, EmploymentHistory, InstituteProfile
+│   ├── accounts/         # User, TeacherProfile, Qualification, Certification, EmploymentHistory, InstituteProfile,
+│   │                       # Phase 4: UniversityProfile, TeacherMeritScore, Notification (merit.py, signals.py)
 │   ├── jobs/             # JobPost, JobQuestion, JobApplication, matching.py, notifications.py
 │   ├── lms/              # Phase 3: Course, Lesson, Enrollment (micro-courses)
-│   └── utils/            # Phase 3: blockchain.py (mock anchoring service)
+│   └── utils/            # Phase 4: crypto.py (Ed25519 signing, SHA-256, key encryption)
 └── frontend/
     └── src/              # pages: AuthPage, TeacherProfile, JobFeed, MyApplications, InstituteDashboard
 ```
@@ -78,13 +79,7 @@ Migrations run automatically on every deploy.
 - Tests: `python manage.py test jobs`
 
 ## Phase 3 (implemented)
-- **Blockchain verification** (`utils/blockchain.py`, mock). A *verified* institute that is named as a teacher's
-  university sees that degree in **Institute dashboard → Issue credentials**, uploads its official PDF/image, and
-  gets a fake `0x…` transaction hash. The file's SHA-256 is real, so `GET /api/credentials/verify/{tx_hash}/`
-  can tell if the stored file was altered. The "Blockchain Verified" badge shows on the teacher's profile and on
-  applications. Editing the course/university/year of an anchored degree withdraws the proof.
-  Swap the body of `anchor_document` for a real provider later; nothing else changes.
-  Matching rule: `Qualification.university` must contain the institute's registered name (case-insensitive).
+- *(The mock blockchain anchoring that was here was replaced by real digital signatures in Phase 4, below.)*
 - **Micro-courses** (`lms` app). Create courses and lessons in `/admin` (tick *Is published*), or run
   `python manage.py seed_lms` for samples. Teachers browse at **/courses**, enroll, open lessons and mark them
   complete; finishing every lesson completes the enrollment and earns the course's badge.
@@ -96,9 +91,6 @@ Migrations run automatically on every deploy.
 
 | Method | Path | Who |
 |---|---|---|
-| GET | `/api/institute/credentials/` | institute: degrees naming it as the university |
-| POST | `/api/institute/credentials/{qualification_id}/issue/` (multipart `document`) | verified institute |
-| GET | `/api/credentials/verify/{tx_hash}/` | any signed-in user |
 | GET | `/api/lms/courses/`, `/api/lms/courses/{id}/` | signed in (lesson content: enrolled teachers only) |
 | POST | `/api/lms/courses/{id}/enroll/` | teacher |
 | GET | `/api/lms/enrollments/` | teacher (own) |
@@ -108,6 +100,41 @@ Migrations run automatically on every deploy.
 
 Upgrading from Phase 2: `python manage.py migrate` (adds `accounts.0002`, `jobs.0003`, `lms.0001`).
 
+## Phase 4 (implemented): PKI, universities, merit score, prestige profile
+**Setup.** `pip install -r backend/requirements.txt`, set `PKI_MASTER_KEYS` (see `.env.example`; required when `DEBUG` is off),
+then `python manage.py migrate` (`accounts.0003-0005`) and `python manage.py recalculate_merit`.
+
+**Flow.** University registers (role `university`) → admin sets it to *verified* in `/admin` (this generates its Ed25519 key pair and
+sets `is_trusted_issuer`) and fills in `nirf_rank` → it appears in the teacher's searchable dropdown → teacher saves a degree with
+both documents (PDF/JPG/PNG, ≤ 5 MB, content-sniffed) → the university gets a bell notification and a *Pending request* →
+reviews the PDF → **Issue & Sign**: SHA-256 of the certificate, then an Ed25519 signature over a canonical message
+(`{qualification, teacher, university, course, level, year, sha256}`) → green *Cryptographically Verified* badge.
+Editing any signed field, or replacing the certificate, withdraws the signature and re-sends the request.
+
+**Keys.** Public key: stored plain and published by the verify endpoint. Private key: Fernet-encrypted under `PKI_MASTER_KEYS`
+(rotate by putting the new key first), never serialized, hidden in admin. Server-custodied by design; the upgrade path is a KMS/HSM behind
+`utils/crypto.sign_message`.
+
+**Merit score (TCS, 0-100)** in `accounts/merit.py`: University 50 (NIRF ≤10: 50, ≤50: 40, ≤100: 30, ≤200: 20, ranked beyond: 10, unranked: 5),
+Degree level 25 (PhD 25, Master/M.Phil 20, Bachelor/Integrated 15, PG Diploma 10, Diploma 5), Certification 15 (CTET/NET 15, TEFL/TESOL 5),
+Experience 10 (1/yr, cap 10). Only **university-signed** degrees and **admin-verified** certificates count; university and level points
+come from the same best degree. Tiers: 90+ Aeterna Laureate, 80+ Distinguished Scholar, 70+ Merit Fellow, 60+ Associate Educator, else Emerging Educator.
+Recalculated after commit by signals (degree/certificate/experience/NIRF change); `schedule_recalculation` is the one place to swap in Celery.
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/universities/?q=` | signed in: verified universities for the dropdown |
+| GET/PATCH | `/api/university/profile/` | university |
+| GET | `/api/university/requests/?status=pending\|signed\|rejected` | university (own degrees only) |
+| GET | `/api/university/requests/{id}/document/{degree\|marksheet}/` | the named university (token-checked file) |
+| POST | `/api/university/requests/{id}/sign/` · `/reject/` | verified university |
+| GET | `/api/credentials/verify/{qualification_id}/` | signed-in, or anyone if the teacher's profile is public |
+| GET | `/api/notifications/` · POST `/{id}/read/` · `/read-all/` | signed in (own) |
+| GET | `/api/public/teachers/{id}/` | anyone, only if visibility is Public |
+| GET | `/t/{id}` | public certificate page (server adds LinkedIn/Open Graph tags) |
+
+Upgrade note: old free-text universities become *unverified, account-less* `UniversityProfile` rows (verify or merge them in `/admin`);
+Phase 3 mock "blockchain" proofs are reset to *pending* because they carried no signature.
 
 ## Still to do
 OTP verification for email/phone/WhatsApp, secure non-downloadable intro video,

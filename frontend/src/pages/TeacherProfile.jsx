@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import api, { errMsg } from '../api'
-import { QualificationBadge } from '../components/BlockchainBadge'
+import MeritProgress from '../components/MeritProgress'
+import QualificationWallet from '../components/QualificationWallet'
+import ShareProfile from '../components/ShareProfile'
+import TierBadge from '../components/TierBadge'
 import { Alert, Chip, CrudSection, FileUpload, FormFields, VerifyChip, buildPayload } from '../components/ui'
 import {
   COURSE_TYPES, DESIGNATIONS, EMPLOYMENT_TYPES, GENDERS, GRADING, INSTITUTE_TYPES, NOTICE,
@@ -11,13 +14,13 @@ const QUALIFICATION_FIELDS = [
   { name: 'level', label: 'Qualification', type: 'select', options: QUAL_LEVELS, required: true },
   { name: 'course', label: 'Course / degree', required: true, datalist: ['B.A.', 'B.Sc.', 'B.Com', 'B.Ed.', 'B.El.Ed.', 'D.El.Ed.', 'B.Tech', 'M.A.', 'M.Sc.', 'M.Com', 'M.Ed.', 'M.Tech', 'Ph.D.'], hint: 'Pick a suggestion or type your own.' },
   { name: 'specialization', label: 'Specialization', placeholder: 'e.g. Physics, English' },
-  { name: 'university', label: 'University / board / institute', required: true },
+  { name: 'university', label: 'University', type: 'university', required: true, full: true, hint: 'Only universities verified by Aeterna are listed. They will be asked to sign your degree.' },
   { name: 'year_of_passing', label: 'Year of passing', type: 'number', required: true, min: 1950 },
   { name: 'course_type', label: 'Course type', type: 'select', options: COURSE_TYPES },
   { name: 'grading_system', label: 'Grading system', type: 'select', options: GRADING },
   { name: 'marks', label: 'Marks / grade', placeholder: 'e.g. 85 or 3.8' },
-  { name: 'marksheet', label: 'Mark sheet', type: 'file' },
-  { name: 'degree_certificate', label: 'Degree certificate', type: 'file' },
+  { name: 'marksheet', label: 'Mark sheet', type: 'file', required: true, accept: '.pdf,.jpg,.jpeg,.png', hint: 'PDF, JPG or PNG, up to 5 MB.' },
+  { name: 'degree_certificate', label: 'Degree certificate', type: 'file', required: true, accept: '.pdf,.jpg,.jpeg,.png', hint: 'PDF, JPG or PNG, up to 5 MB. This exact file is what your university signs.' },
 ]
 
 const CERT_FIELDS = [
@@ -53,7 +56,7 @@ export default function TeacherProfile() {
   if (!p) return <p>Loading…</p>
 
   const set = (k, v) => setP((x) => ({ ...x, [k]: v }))
-  const refreshCompleteness = () => api.get('/teacher/profile/').then((r) => setP((x) => ({ ...x, completeness: r.data.completeness })))
+  const refreshCompleteness = () => api.get('/teacher/profile/').then((r) => setP((x) => ({ ...x, completeness: r.data.completeness, merit: r.data.merit })))
   const words = (p.bio || '').trim().split(/\s+/).filter(Boolean).length
 
   const groups = [
@@ -133,8 +136,10 @@ export default function TeacherProfile() {
         <div className="min-w-[14rem] flex-1">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-3xl font-bold">{[p.first_name, p.last_name].filter(Boolean).join(' ')}</h1>
+            {p.merit && <TierBadge tier={p.merit.tier} name={p.merit.tier_name} size="lg" />}
             <Chip className={WORK_STATUS_STYLE[p.employment_status]}>{label(WORK_STATUS, p.employment_status)}</Chip>
           </div>
+          {p.merit && <p className="mt-1 font-display text-lg font-semibold leading-snug">{p.merit.headline}</p>}
           <p className="text-teal-soft">{p.headline || 'Add a headline so recruiters know who you are.'}</p>
           <div className="mt-3 max-w-sm">
             <div className="flex justify-between text-xs font-semibold"><span>Profile completeness</span><span>{p.completeness}%</span></div>
@@ -143,6 +148,11 @@ export default function TeacherProfile() {
         </div>
         <FileUpload label="Professional photo (white background)" endpoint="/teacher/profile/" field="photo" accept="image/*" url={p.photo} onDone={(d) => { set('photo', d.photo); refreshCompleteness() }} />
       </section>
+
+      <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
+        <MeritProgress merit={p.merit} />
+        <ShareProfile teacherId={p.id} visibility={p.visibility} onVisibility={(v) => set('visibility', v)} />
+      </div>
 
       <form onSubmit={save} className="space-y-6">
         {groups.map((g) => (
@@ -157,16 +167,11 @@ export default function TeacherProfile() {
       </form>
 
       <CrudSection
-        title="Qualifications" hint="Add each degree or diploma. Upload your mark sheet and certificate for verification."
+        title="Qualifications" hint="Choose your university, upload both documents, and it signs your degree. Signed degrees earn the green badge and count towards your merit score."
         endpoint="/teacher/qualifications/" fields={QUALIFICATION_FIELDS} onChange={refreshCompleteness}
         emptyText="No qualifications yet. Add your highest degree first."
-        summary={(q) => (
-          <>
-            <p className="font-semibold">{q.course}{q.specialization && `, ${q.specialization}`}</p>
-            <p className="text-teal-soft">{q.university} · {q.year_of_passing}{q.marks && ` · ${q.marks}`}</p>
-            <div className="mt-1"><QualificationBadge q={q} /></div>
-          </>
-        )}
+        renderItems={(props) => <QualificationWallet {...props} />}
+        summary={() => null}
       />
 
       <CrudSection

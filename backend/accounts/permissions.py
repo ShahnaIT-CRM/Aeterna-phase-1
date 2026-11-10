@@ -15,3 +15,11 @@ class IsInstitute(BasePermission):
     def has_permission(self, request, view):
         u = request.user
         return bool(u and u.is_authenticated and u.role == "institute" and hasattr(u, "institute_profile"))
+
+
+class IsUniversity(BasePermission):
+    message = "Only university accounts can do this."
+
+    def has_permission(self, request, view):
+        u = request.user
+        return bool(u and u.is_authenticated and u.role == "university" and hasattr(u, "university_profile"))

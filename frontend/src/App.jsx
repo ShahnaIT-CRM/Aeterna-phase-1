@@ -9,11 +9,13 @@ import TeacherProfile from './pages/TeacherProfile'
 import InstituteDashboard from './pages/InstituteDashboard'
 import Courses from './pages/Courses'
 import CourseDetail from './pages/CourseDetail'
+import UniversityDashboard from './pages/UniversityDashboard'
 
 // Lazy-loaded so logged-in users never download framer-motion / landing assets.
 const LandingPage = lazy(() => import('./pages/LandingPage'))
+const PublicProfile = lazy(() => import('./pages/PublicProfile'))
 
-const dashboardFor = (user) => (user.role === 'institute' ? '/institute' : '/jobs')
+const dashboardFor = (user) => ({ institute: '/institute', university: '/university' }[user.role] || '/jobs')
 const Blank = () => <div className="min-h-screen bg-beige" aria-busy="true" />
 
 // "/" – public landing for visitors, straight to the right dashboard for signed-in users.
@@ -42,6 +44,7 @@ export default function App() {
       {/* Full-bleed public pages (no Layout chrome) */}
       <Route path="/" element={<Root />} />
       <Route path="/auth" element={<AuthPage />} />
+      <Route path="/t/:teacher_id" element={<Suspense fallback={<Blank />}><PublicProfile /></Suspense>} />
 
       <Route element={<Layout />}>
         <Route path="/jobs" element={<Guard role="teacher"><JobFeed /></Guard>} />
@@ -50,6 +53,7 @@ export default function App() {
         <Route path="/courses/:id" element={<Guard role="teacher"><CourseDetail /></Guard>} />
         <Route path="/profile" element={<Guard role="teacher"><TeacherProfile /></Guard>} />
         <Route path="/institute" element={<Guard role="institute"><InstituteDashboard /></Guard>} />
+        <Route path="/university" element={<Guard role="university"><UniversityDashboard /></Guard>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

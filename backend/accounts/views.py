@@ -1,20 +1,33 @@
+import html
+import mimetypes
+import re
+
+from django.conf import settings
 from django.db import transaction
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
+from django.template import TemplateDoesNotExist
+from django.template.loader import render_to_string
+from django.utils import timezone
 from rest_framework import permissions, status, viewsets
-from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework.generics import RetrieveUpdateAPIView
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
+from rest_framework.generics import ListAPIView, RetrieveUpdateAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from utils import blockchain
+from utils import crypto
 
-from .models import Certification, EmploymentHistory, Qualification, VerificationStatus
-from .permissions import IsInstitute, IsTeacher
+from . import notifications
+from .models import (
+    Certification, EmploymentHistory, Notification, Qualification, TeacherProfile, UniversityProfile,
+    VerificationStatus,
+)
+from .permissions import IsInstitute, IsTeacher, IsUniversity
 from .serializers import (
-    CertificationSerializer, EmploymentHistorySerializer, InstituteProfileSerializer,
-    IssuerCredentialSerializer, QualificationSerializer, RegisterSerializer, TeacherProfileSerializer,
+    CertificationSerializer, DegreeRequestSerializer, EmploymentHistorySerializer, InstituteProfileSerializer,
+    NotificationSerializer, QualificationSerializer, RegisterSerializer, TeacherProfileSerializer,
+    UniversityOptionSerializer, UniversityProfileSerializer, merit_payload,
 )
 
 
@@ -23,6 +36,8 @@ def user_payload(user):
         name = user.teacher_profile.full_name
     elif user.role == "institute":
         name = user.institute_profile.name
+    elif user.role == "university":
+        name = user.university_profile.name
     else:
         name = "Admin"
     return {"id": user.id, "email": user.email, "role": user.role, "display_name": name}
@@ -65,6 +80,15 @@ class InstituteProfileView(RetrieveUpdateAPIView):
         return self.request.user.institute_profile
 
 
+class UniversityProfileView(RetrieveUpdateAPIView):
+    serializer_class = UniversityProfileSerializer
+    permission_classes = [IsUniversity]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_object(self):
+        return self.request.user.university_profile
+
+
 class _TeacherOwnedViewSet(viewsets.ModelViewSet):
     permission_classes = [IsTeacher]
     model = None
@@ -91,94 +115,277 @@ class EmploymentViewSet(_TeacherOwnedViewSet):
     serializer_class = EmploymentHistorySerializer
 
 
-# ---------------------------------------------------------------- Phase 3: blockchain credentials
-MAX_CREDENTIAL_BYTES = 10 * 1024 * 1024
-CREDENTIAL_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg")
+# ---------------------------------------------------------------- Phase 4: universities, PKI, merit
+class UniversityListView(ListAPIView):
+    """GET /api/universities/?q=: verified universities for the teacher's searchable dropdown."""
+
+    serializer_class = UniversityOptionSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        qs = UniversityProfile.objects.filter(
+            verification_status=VerificationStatus.VERIFIED, is_trusted_issuer=True
+        ).exclude(public_key="")
+        q = self.request.query_params.get("q", "").strip()
+        return qs.filter(name__icontains=q) if q else qs
 
 
-def issuer_qualifications(institute):
-    """Degrees that name this institute as the awarding university (case-insensitive substring match).
-
-    One rule for both the queue and the issue endpoint, so an institute can only ever anchor a degree
-    it can also see. Only admin-verified institutes may issue at all (checked in the views).
-    """
-    if not institute.name.strip():
-        return Qualification.objects.none()
-    return Qualification.objects.select_related("teacher").filter(university__icontains=institute.name.strip())
+class SigningUnavailable(APIException):
+    status_code = 503
+    default_detail = "The signing key is temporarily unavailable. Please try again later."
 
 
-class CredentialQueueView(APIView):
-    """GET /api/institute/credentials/: degrees that name this institute, pending ones first."""
+class _UniversityRequestMixin:
+    permission_classes = [IsUniversity]
 
-    permission_classes = [IsInstitute]
+    def own_requests(self):
+        return Qualification.objects.select_related("teacher", "university").filter(
+            university=self.request.user.university_profile
+        )
+
+
+class DegreeRequestListView(_UniversityRequestMixin, APIView):
+    """GET /api/university/requests/?status=pending|signed|rejected (default pending)."""
 
     def get(self, request):
-        qs = issuer_qualifications(request.user.institute_profile).order_by("blockchain_tx_hash", "-year_of_passing")
-        return Response(IssuerCredentialSerializer(qs, many=True, context={"request": request}).data)
+        qs = self.own_requests()
+        want = request.query_params.get("status", "pending")
+        if want == "signed":
+            qs = qs.exclude(signature="").order_by("-signed_at")
+        elif want == "rejected":
+            qs = qs.filter(verification_status=VerificationStatus.REJECTED).order_by("-created_at")
+        else:
+            qs = qs.filter(signature="", verification_status=VerificationStatus.PENDING).order_by("created_at")
+        return Response(DegreeRequestSerializer(qs, many=True).data)
 
 
-class IssueCredentialView(APIView):
-    """POST /api/institute/credentials/<id>/issue/ (multipart, field `document`).
+class DegreeRequestDocumentView(_UniversityRequestMixin, APIView):
+    """GET /api/university/requests/<id>/document/<degree|marksheet>/: the teacher's upload, only to the
+    university the degree names, and only with a valid login (so the file is never an open link)."""
 
-    The institute uploads its official digital copy; we fingerprint it, "write" it to the mock chain
-    and mark the degree blockchain-verified.
+    def get(self, request, pk, which):
+        field = {"degree": "degree_certificate", "marksheet": "marksheet"}.get(which)
+        if not field:
+            raise Http404
+        q = get_object_or_404(self.own_requests(), pk=pk)
+        f = getattr(q, field)
+        if not f:
+            raise Http404
+        try:
+            fh = f.open("rb")
+        except OSError:
+            raise Http404
+        ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+        resp = FileResponse(fh, content_type=ctype)
+        resp["Content-Disposition"] = f'inline; filename="{which}{f.name[f.name.rfind("."):]}"'
+        resp["X-Content-Type-Options"] = "nosniff"
+        return resp
+
+
+class SignDegreeView(_UniversityRequestMixin, APIView):
+    """POST /api/university/requests/<id>/sign/: "Issue & Sign".
+
+    SHA-256 of the teacher's degree certificate, then an Ed25519 signature over the canonical credential
+    message (which contains that hash), made with the university's private key.
     """
 
-    permission_classes = [IsInstitute]
-    parser_classes = [MultiPartParser, FormParser]
-
     def post(self, request, pk):
-        inst = request.user.institute_profile
-        if inst.verification_status != VerificationStatus.VERIFIED:
-            raise PermissionDenied("Your institute must be verified by Aeterna before it can issue credentials.")
-        doc = request.FILES.get("document")
-        if not doc:
-            raise ValidationError({"document": "Upload the official certificate file."})
-        if not doc.name.lower().endswith(CREDENTIAL_EXTENSIONS):
-            raise ValidationError({"document": "Upload a PDF, PNG or JPG file."})
-        if doc.size > MAX_CREDENTIAL_BYTES:
-            raise ValidationError({"document": "File is too large (10 MB maximum)."})
-
+        uni = request.user.university_profile
+        if not uni.can_issue:
+            raise PermissionDenied("Your university must be verified by Aeterna before it can sign degrees.")
         with transaction.atomic():
-            q = get_object_or_404(issuer_qualifications(inst).select_for_update(of=("self",)), pk=pk)
-            if q.blockchain_tx_hash:
-                raise ValidationError({"detail": "This degree has already been anchored."})
-            receipt = blockchain.anchor_document(doc, issuer_id=inst.pk, subject_id=q.pk)
-            q.issuer_document = doc
-            q.blockchain_tx_hash = receipt.tx_hash
-            q.document_sha256 = receipt.document_sha256
-            q.blockchain_block = receipt.block_number
-            q.verified_at = receipt.anchored_at
-            q.verified_by = inst
+            q = get_object_or_404(self.own_requests().select_for_update(of=("self",)), pk=pk)
+            if q.signature:
+                raise ValidationError({"detail": "This degree has already been signed."})
+            if not q.degree_certificate:
+                raise ValidationError({"detail": "The teacher has not uploaded a degree certificate."})
+            try:
+                q.document_sha256 = crypto.sha256_of_file(q.degree_certificate)
+            except OSError:
+                raise ValidationError({"detail": "The certificate file could not be read."})
+            message = q.signing_message()
+            try:
+                signature = crypto.sign_message(uni.encrypted_private_key, message)
+            except crypto.KeyDecryptionError:
+                raise SigningUnavailable()
+            if not crypto.verify_signature(uni.public_key, message, signature):  # self-check before saving
+                raise SigningUnavailable()
+            q.signature = signature
+            q.signed_by = uni
+            q.signed_at = timezone.now()
             q.verification_status = VerificationStatus.VERIFIED
             q.save()
-        return Response(IssuerCredentialSerializer(q, context={"request": request}).data, status=201)
+            notifications.notify_degree_signed(q)
+        return Response(DegreeRequestSerializer(q).data, status=201)
+
+
+class RejectDegreeView(_UniversityRequestMixin, APIView):
+    """POST /api/university/requests/<id>/reject/: the university cannot confirm this degree."""
+
+    def post(self, request, pk):
+        with transaction.atomic():
+            q = get_object_or_404(self.own_requests().select_for_update(of=("self",)), pk=pk)
+            if q.signature:
+                raise ValidationError({"detail": "A signed degree cannot be rejected."})
+            q.verification_status = VerificationStatus.REJECTED
+            q.save(update_fields=["verification_status"])
+            notifications.notify_degree_rejected(q)
+        return Response(DegreeRequestSerializer(q).data)
 
 
 class VerifyCredentialView(APIView):
-    """GET /api/credentials/verify/<tx_hash>/: the "click a link, see a tamper-proof certificate" check.
+    """GET /api/credentials/verify/<qualification_id>/: re-check a signed degree from scratch.
 
-    Any signed-in user may call it, but the 64-hex hash is only ever shown on a candidate's application
-    or profile, and the response leaves out who the teacher is.
+    Re-hashes the stored certificate, rebuilds the signed message from the database record and checks the
+    Ed25519 signature with the university's public key. Visitors who are not signed in can only check
+    degrees of teachers whose profile is public. The response never says who the teacher is.
     """
 
-    def get(self, request, tx_hash):
-        tx_hash = tx_hash.lower()
-        q = Qualification.objects.select_related("verified_by").filter(blockchain_tx_hash=tx_hash).first()
-        if not blockchain.is_valid_tx_hash(tx_hash) or not q:
-            return Response({"valid": False, "detail": "No record found for this transaction."}, status=404)
-        intact = bool(q.issuer_document) and blockchain.file_matches(q.issuer_document, q.document_sha256)
-        return Response(
-            {
-                "valid": intact,
-                "tx_hash": q.blockchain_tx_hash,
-                "network": blockchain.NETWORK,
-                "block_number": q.blockchain_block,
-                "anchored_at": q.verified_at,
-                "issued_by": q.verified_by.name if q.verified_by else None,
-                "course": q.course,
-                "university": q.university,
-                "year_of_passing": q.year_of_passing,
-                "document_intact": intact,
-            }
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, pk):
+        q = Qualification.objects.select_related("university", "signed_by", "teacher").filter(pk=pk).first()
+        if not q or not (q.teacher.visibility == TeacherProfile.Visibility.PUBLIC or request.user.is_authenticated):
+            return Response({"valid": False, "status": "not_found", "detail": "No record found."}, status=404)
+        if not q.signature or not q.signed_by:
+            return Response({"valid": False, "status": "unsigned", "detail": "This degree has not been signed by its university."})
+
+        signer = q.signed_by
+        signature_ok = signer.id == q.university_id and crypto.verify_signature(
+            signer.public_key, q.signing_message(), q.signature
         )
+        intact = bool(q.degree_certificate) and crypto.file_matches(q.degree_certificate, q.document_sha256)
+        trusted = signer.is_trusted_issuer and signer.verification_status == VerificationStatus.VERIFIED
+        if not signature_ok:
+            state = "signature_invalid"
+        elif not intact:
+            state = "document_altered"
+        elif not trusted:
+            state = "issuer_revoked"
+        else:
+            state = "valid"
+        return Response({
+            "valid": state == "valid",
+            "status": state,
+            "signature_valid": signature_ok,
+            "document_intact": intact,
+            "issuer_trusted": trusted,
+            "algorithm": crypto.ALGORITHM,
+            "issued_by": signer.name,
+            "issuer_nirf_rank": signer.nirf_rank,
+            "key_fingerprint": signer.key_fingerprint,
+            "public_key": signer.public_key,
+            "signature": q.signature,
+            "document_sha256": q.document_sha256,
+            "signed_message": q.signing_message().decode(),
+            "signed_at": q.signed_at,
+            "course": q.course,
+            "level": q.level,
+            "year_of_passing": q.year_of_passing,
+            "university": q.university.name,
+        })
+
+
+# ---------------------------------------------------------------- notifications (bell dropdown)
+class NotificationListView(APIView):
+    """GET /api/notifications/ -> {unread_count, results: latest 20}."""
+
+    def get(self, request):
+        mine = Notification.objects.filter(recipient=request.user)
+        return Response({
+            "unread_count": mine.filter(is_read=False).count(),
+            "results": NotificationSerializer(mine[:20], many=True).data,
+        })
+
+
+class NotificationReadView(APIView):
+    def post(self, request, pk):
+        Notification.objects.filter(recipient=request.user, pk=pk).update(is_read=True)
+        return Response(status=204)
+
+
+class NotificationReadAllView(APIView):
+    def post(self, request):
+        Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+        return Response(status=204)
+
+
+# ---------------------------------------------------------------- public prestige profile
+def _public_teacher(teacher_id):
+    return get_object_or_404(
+        TeacherProfile.objects.select_related("merit"), pk=teacher_id, visibility=TeacherProfile.Visibility.PUBLIC
+    )
+
+
+class PublicTeacherView(APIView):
+    """GET /api/public/teachers/<id>/: the shareable certificate page. Only teachers who set their profile
+    to Public. No contact details, date of birth, address, marks or document files are ever included."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, teacher_id):
+        t = _public_teacher(teacher_id)
+        degrees = [
+            q for q in t.qualifications.select_related("university")
+            if q.cryptographically_verified
+        ]
+        return Response({
+            "id": t.id,
+            "name": t.full_name,
+            "photo": request.build_absolute_uri(t.photo.url) if t.photo else None,
+            "headline": t.headline,
+            "city": t.city,
+            "state": t.state,
+            "total_experience_years": t.total_experience_years,
+            "subjects": t.subjects,
+            "merit": merit_payload(t, include_progress=False),
+            "qualifications": [
+                {
+                    "id": q.id, "course": q.course, "specialization": q.specialization,
+                    "level": q.level, "level_label": q.get_level_display(), "year_of_passing": q.year_of_passing,
+                    "university_name": q.university.name, "nirf_rank": q.university.nirf_rank,
+                    "cryptographically_verified": True,
+                }
+                for q in degrees
+            ],
+            "certifications": [
+                {"name": c.name, "issuing_organization": c.issuing_organization}
+                for c in t.certifications.filter(verification_status=VerificationStatus.VERIFIED)
+            ],
+            "employment": [
+                {
+                    "designation": e.designation, "institute_name": e.institute_name,
+                    "start_date": e.start_date, "end_date": e.end_date, "is_current": e.is_current,
+                }
+                for e in t.employment.all()[:6]
+            ],
+            "member_since": t.created_at,
+        })
+
+
+def public_profile_shell(request, teacher_id):
+    """GET /t/<id>: the React app's index.html with Open Graph tags filled in, so LinkedIn, WhatsApp and
+    friends show a proper preview card (they do not run JavaScript)."""
+    try:
+        page = render_to_string("index.html", request=request)
+    except TemplateDoesNotExist:
+        raise Http404
+    t = TeacherProfile.objects.select_related("merit").filter(
+        pk=teacher_id, visibility=TeacherProfile.Visibility.PUBLIC
+    ).first()
+    if t and getattr(t, "merit", None):
+        title = f"{t.full_name} · {t.merit.get_tier_display()} | Aeterna"
+        desc = t.merit.headline
+        base = settings.SITE_URL.rstrip("/")
+        tags = [
+            ("og:type", "profile"), ("og:title", title), ("og:description", desc),
+            ("og:url", f"{base}/t/{t.id}"), ("og:site_name", "Aeterna"),
+        ]
+        if t.photo:
+            tags.append(("og:image", base + t.photo.url))
+        meta = "".join(f'<meta property="{k}" content="{html.escape(v, quote=True)}">' for k, v in tags)
+        meta += f'<meta name="description" content="{html.escape(desc, quote=True)}">'
+        page = re.sub(r"<title>.*?</title>", lambda _: f"<title>{html.escape(title)}</title>", page, count=1, flags=re.S)
+        page = page.replace("</head>", meta + "</head>", 1)
+    return HttpResponse(page)

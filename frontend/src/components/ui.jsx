@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import api, { errMsg } from '../api'
+import UniversityPicker from './UniversityPicker'
 
 export function TagInput({ value, onChange, placeholder }) {
   const [text, setText] = useState((value || []).join(', '))
@@ -35,6 +36,39 @@ export function buildPayload(values, fields) {
   return out
 }
 
+const DOC_EXT = ['.pdf', '.jpg', '.jpeg', '.png']
+export const MAX_DOC_MB = 5
+/** Client-side twin of the server's upload rule (the server still decides). Returns an error string or ''. */
+export function checkDocument(file) {
+  if (!file) return ''
+  const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+  if (!DOC_EXT.includes(ext)) return 'Upload a PDF, JPG or PNG file.'
+  if (file.size > MAX_DOC_MB * 1024 * 1024) return `This file is ${(file.size / 1048576).toFixed(1)} MB. The maximum is ${MAX_DOC_MB} MB.`
+  return ''
+}
+
+function FileField({ f, v, set }) {
+  const [problem, setProblem] = useState('')
+  const hasExisting = typeof v === 'string' && v
+  const pick = (e) => {
+    const file = e.target.files[0]
+    const bad = checkDocument(file)
+    setProblem(bad)
+    if (bad) { e.target.value = ''; return } // reject: keep whatever was there before
+    set(f.name, file)
+  }
+  return (
+    <div className="text-sm">
+      {hasExisting && <a className="mr-3 underline" href={v} target="_blank" rel="noreferrer">View current file</a>}
+      <input
+        id={f.name} type="file" accept={f.accept} aria-invalid={!!problem} aria-describedby={problem ? `${f.name}-err` : undefined}
+        required={f.required && !hasExisting && !(v instanceof File)} onChange={pick}
+      />
+      {problem && <p id={`${f.name}-err`} role="alert" className="mt-1 text-red-800">{problem}</p>}
+    </div>
+  )
+}
+
 export function FormFields({ fields, values, set }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
@@ -60,12 +94,9 @@ export function FormFields({ fields, values, set }) {
         } else if (f.type === 'tags') {
           input = <TagInput value={v} onChange={(arr) => set(f.name, arr)} placeholder={f.placeholder} />
         } else if (f.type === 'file') {
-          input = (
-            <div className="text-sm">
-              {typeof v === 'string' && v && <a className="mr-3 underline" href={v} target="_blank" rel="noreferrer">View current file</a>}
-              <input id={f.name} type="file" onChange={(e) => set(f.name, e.target.files[0])} />
-            </div>
-          )
+          input = <FileField f={f} v={v} set={set} />
+        } else if (f.type === 'university') {
+          input = <UniversityPicker id={f.name} value={v} required={f.required} onChange={(id) => set(f.name, id)} />
         } else {
           input = (
             <>
@@ -78,7 +109,7 @@ export function FormFields({ fields, values, set }) {
           <div key={f.name} className={f.full ? 'sm:col-span-2' : ''}>
             {f.type !== 'checkbox' && (
               <label className="label" htmlFor={f.name}>
-                {f.label}
+                {f.label}{f.required && <span className="text-red-800" aria-hidden="true"> *</span>}
                 {f.tip && <span tabIndex={0} role="img" aria-label={f.tip} title={f.tip} className="ml-1 cursor-help text-teal-light">ⓘ</span>}
               </label>
             )}
@@ -157,7 +188,7 @@ export function FileUpload({ label, endpoint, field, url, onDone, accept }) {
 }
 
 /** Generic list + add/edit/delete section backed by a REST endpoint. */
-export function CrudSection({ title, hint, endpoint, fields, summary, emptyText, onChange }) {
+export function CrudSection({ title, hint, endpoint, fields, summary, emptyText, onChange, renderItems }) {
   const [items, setItems] = useState([])
   const [form, setForm] = useState(null)
   const [err, setErr] = useState('')
@@ -203,8 +234,9 @@ export function CrudSection({ title, hint, endpoint, fields, summary, emptyText,
       </div>
 
       {items.length === 0 && !form && <p className="text-sm text-teal-soft">{emptyText}</p>}
+      {renderItems && items.length > 0 && renderItems({ items, edit: (it) => setForm(it), remove })}
       <ul className="divide-y divide-beige-line">
-        {items.map((it) => (
+        {!renderItems && items.map((it) => (
           <li key={it.id} className="flex items-start justify-between gap-4 py-3">
             <div className="text-sm">{summary(it)}</div>
             <div className="flex shrink-0 gap-4 text-sm">

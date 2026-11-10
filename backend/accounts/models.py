@@ -3,6 +3,10 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
+from utils import crypto
+
+from .validators import validate_credential_file
+
 
 class UserManager(BaseUserManager):
     use_in_migrations = True
@@ -29,6 +33,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
         TEACHER = "teacher", "Teacher"
         INSTITUTE = "institute", "Institute"
+        UNIVERSITY = "university", "University"
         ADMIN = "admin", "Admin"
 
     email = models.EmailField(unique=True)
@@ -189,27 +194,30 @@ class Qualification(models.Model):
     level = models.CharField(max_length=15, choices=Level.choices)
     course = models.CharField(max_length=120)  # e.g. B.Ed., M.Sc.
     specialization = models.CharField(max_length=120, blank=True)
-    university = models.CharField(max_length=200)
+    university = models.ForeignKey(
+        "UniversityProfile", on_delete=models.PROTECT, related_name="degrees",
+        help_text="Awarding university. Only admin-verified universities can be chosen.",
+    )
     year_of_passing = models.PositiveSmallIntegerField()
     course_type = models.CharField(max_length=10, choices=CourseType.choices, default=CourseType.FULL_TIME)
     grading_system = models.CharField(max_length=10, choices=Grading.choices, default=Grading.PERCENTAGE)
     marks = models.CharField(max_length=20, blank=True)
-    marksheet = models.FileField(upload_to="qualification_docs/", blank=True, null=True)
-    degree_certificate = models.FileField(upload_to="qualification_docs/", blank=True, null=True)
-    # Phase 2: blockchain-backed certificate verification
+    # Both documents are mandatory: PDF / JPG / PNG, at most 5 MB.
+    marksheet = models.FileField(upload_to="qualification_docs/", validators=[validate_credential_file])
+    degree_certificate = models.FileField(upload_to="qualification_docs/", validators=[validate_credential_file])
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Verification. A degree is "cryptographically verified" only when its university has signed it
+    # (see UniversityProfile and utils/crypto.py). Setting verification_status by hand does not count.
     verification_status = models.CharField(
         max_length=10, choices=VerificationStatus.choices, default=VerificationStatus.PENDING
     )
-    blockchain_tx_hash = models.CharField(max_length=128, blank=True)
-    # Phase 3: the issuing institute's official digital copy, anchored on the (mock) chain.
-    # The teacher's own uploads above are never touched by this flow.
-    issuer_document = models.FileField(upload_to="issued_credentials/", blank=True, null=True)
-    document_sha256 = models.CharField(max_length=64, blank=True)
-    blockchain_block = models.PositiveBigIntegerField(null=True, blank=True)
-    verified_at = models.DateTimeField(null=True, blank=True)
-    verified_by = models.ForeignKey(
-        "InstituteProfile", null=True, blank=True, on_delete=models.SET_NULL, related_name="issued_credentials"
+    document_sha256 = models.CharField(max_length=64, blank=True)  # SHA-256 of degree_certificate when signed
+    signature = models.CharField(max_length=128, blank=True)  # base64 Ed25519 signature
+    signed_by = models.ForeignKey(
+        "UniversityProfile", null=True, blank=True, on_delete=models.SET_NULL, related_name="signed_credentials"
     )
+    signed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-year_of_passing"]
@@ -218,18 +226,24 @@ class Qualification(models.Model):
         return f"{self.course} ({self.year_of_passing})"
 
     @property
-    def blockchain_verified(self):
-        """True only for degrees anchored by the issuing institute. An admin clicking 'verified' in
-        the Django admin sets verification_status but not a hash, so it does not earn this badge."""
-        return bool(self.blockchain_tx_hash) and self.verification_status == VerificationStatus.VERIFIED
+    def cryptographically_verified(self):
+        """True only for degrees signed by the university. An admin ticking 'verified' in the Django admin
+        sets verification_status but no signature, so it does not earn the badge."""
+        return bool(self.signature) and self.verification_status == VerificationStatus.VERIFIED
 
-    def clear_blockchain_proof(self):
-        self.verification_status = VerificationStatus.PENDING
-        self.blockchain_tx_hash = ""
+    def signing_message(self):
+        return crypto.build_credential_message(
+            qualification_id=self.pk, teacher_id=self.teacher_id, university_id=self.university_id,
+            course=self.course, level=self.level, year_of_passing=self.year_of_passing,
+            document_sha256=self.document_sha256,
+        )
+
+    def clear_signature(self, status=VerificationStatus.PENDING):
+        self.verification_status = status
         self.document_sha256 = ""
-        self.blockchain_block = None
-        self.verified_at = None
-        self.verified_by = None
+        self.signature = ""
+        self.signed_by = None
+        self.signed_at = None
 
 
 class Certification(models.Model):
@@ -319,3 +333,102 @@ class InstituteProfile(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class UniversityProfile(models.Model):
+    """An awarding university. Created at registration (pending); an admin verifies it, which also
+    generates its Ed25519 signing key pair. `user` is empty for universities pre-loaded by an admin
+    (or migrated from old free-text entries) that have not claimed an account yet."""
+
+    user = models.OneToOneField(User, null=True, blank=True, on_delete=models.CASCADE, related_name="university_profile")
+    name = models.CharField(max_length=200, unique=True)
+    city = models.CharField(max_length=80, blank=True)
+    state = models.CharField(max_length=80, blank=True)
+    website = models.URLField(blank=True)
+    logo = models.ImageField(upload_to="university_logos/", blank=True, null=True)
+
+    verification_status = models.CharField(
+        max_length=10, choices=VerificationStatus.choices, default=VerificationStatus.PENDING
+    )
+    is_trusted_issuer = models.BooleanField(
+        default=False, help_text="Switched on at first verification. Untick to revoke signing rights."
+    )
+    nirf_rank = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Latest NIRF overall/university rank. Blank = unranked. Admin-controlled."
+    )
+    public_key = models.TextField(blank=True, editable=False)  # base64 Ed25519 public key
+    encrypted_private_key = models.TextField(blank=True, editable=False)  # Fernet-encrypted; never serialized
+    keys_generated_at = models.DateTimeField(null=True, blank=True, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def can_issue(self):
+        return (
+            self.verification_status == VerificationStatus.VERIFIED
+            and self.is_trusted_issuer and bool(self.public_key) and bool(self.encrypted_private_key)
+        )
+
+    @property
+    def key_fingerprint(self):
+        return crypto.public_key_fingerprint(self.public_key) if self.public_key else ""
+
+    def save(self, *args, **kwargs):
+        # Verification is the moment the key pair is minted, whichever way the status was changed.
+        if self.verification_status == VerificationStatus.VERIFIED and not self.public_key:
+            self.public_key, self.encrypted_private_key = crypto.generate_keypair()
+            self.keys_generated_at = timezone.now()
+            self.is_trusted_issuer = True
+        super().save(*args, **kwargs)
+
+
+class Notification(models.Model):
+    """In-app notification shown in the bell dropdown."""
+
+    class Kind(models.TextChoices):
+        DEGREE_REQUEST = "degree_request", "Degree request"
+        DEGREE_SIGNED = "degree_signed", "Degree signed"
+        DEGREE_REJECTED = "degree_rejected", "Degree rejected"
+        TIER_UP = "tier_up", "Tier reached"
+
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    title = models.CharField(max_length=160)
+    body = models.CharField(max_length=300, blank=True)
+    link = models.CharField(max_length=200, blank=True)  # front-end route to open on click
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["recipient", "is_read", "-created_at"])]
+
+    def __str__(self):
+        return f"{self.recipient_id}: {self.title}"
+
+
+class TeacherMeritScore(models.Model):
+    """Teacher Credential Score (TCS), 0-100. Recomputed by accounts.merit.recalculate_merit."""
+
+    class Tier(models.TextChoices):
+        LAUREATE = "laureate", "Aeterna Laureate"
+        DISTINGUISHED = "distinguished", "Distinguished Scholar"
+        FELLOW = "fellow", "Merit Fellow"
+        ASSOCIATE = "associate", "Associate Educator"
+        EMERGING = "emerging", "Emerging Educator"
+
+    teacher = models.OneToOneField(TeacherProfile, on_delete=models.CASCADE, related_name="merit")
+    score = models.PositiveSmallIntegerField(default=0)
+    tier = models.CharField(max_length=15, choices=Tier.choices, default=Tier.EMERGING)
+    headline = models.CharField(max_length=255, blank=True)
+    # {"university": 40, "degree": 25, "certification": 15, "experience": 8}
+    breakdown = models.JSONField(default=dict, blank=True)
+    calculated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.teacher} {self.score} ({self.tier})"

@@ -6,7 +6,9 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts.models import Certification, InstituteProfile, Qualification, TeacherProfile, User
+from accounts.models import (
+    Certification, InstituteProfile, Qualification, TeacherProfile, UniversityProfile, User,
+)
 
 from .matching import compute_match_breakdown, compute_match_score
 from .models import JobApplication, JobPost, JobQuestion
@@ -23,6 +25,23 @@ def make_teacher(email="t@x.com", **kw):
 def make_institute(email="i@x.com", name="Greenwood High"):
     u = User.objects.create_user(email=email, password="pw12345678", role="institute")
     return InstituteProfile.objects.create(user=u, name=name)
+
+
+def make_university(email="uni@x.com", name="Bangalore University", verified=True, nirf=None):
+    u = User.objects.create_user(email=email, password="pw12345678", role="university")
+    uni = UniversityProfile.objects.create(user=u, name=name, nirf_rank=nirf)
+    if verified:  # saving as verified mints the Ed25519 key pair
+        uni.verification_status = "verified"
+        uni.save()
+    return uni
+
+
+def make_degree(teacher, uni, level="bachelors", course="B.Sc.", year=2015, pdf=b"%PDF-1.4 degree", **kw):
+    return Qualification.objects.create(
+        teacher=teacher, university=uni, level=level, course=course, year_of_passing=year,
+        marksheet=SimpleUploadedFile("m.pdf", b"%PDF-1.4 marks"),
+        degree_certificate=SimpleUploadedFile("d.pdf", pdf), **kw,
+    )
 
 
 def make_job(inst, **kw):
@@ -127,12 +146,9 @@ class ApplyFlowTests(TestCase):
 
     def test_apply_auto_attaches_only_uploaded_documents(self):
         f = lambda n: SimpleUploadedFile(n, b"%PDF-1.4 test")
-        q_deg = Qualification.objects.create(teacher=self.teacher, level="masters", course="M.Sc.",
-                                             university="IISc", year_of_passing=2015, degree_certificate=f("d.pdf"))
-        q_marks = Qualification.objects.create(teacher=self.teacher, level="bachelors", course="B.Ed.",
-                                               university="X", year_of_passing=2013, marksheet=f("m.pdf"))
-        Qualification.objects.create(teacher=self.teacher, level="intermediate", course="12th",
-                                     university="Y", year_of_passing=2010)  # no file
+        uni = make_university()
+        q_deg = make_degree(self.teacher, uni, level="masters", course="M.Sc.")
+        q_marks = make_degree(self.teacher, uni, level="bachelors", course="B.Ed.", year=2013)
         c_doc = Certification.objects.create(teacher=self.teacher, name="CTET", document=f("c.pdf"))
         Certification.objects.create(teacher=self.teacher, name="NET")  # no file
 

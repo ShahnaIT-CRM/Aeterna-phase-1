@@ -1,3 +1,4 @@
+import sys
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -124,3 +125,8 @@ EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1") == "1"
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Aeterna <no-reply@aeterna.local>")
 # Used to build links inside emails.
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:5173")
+
+# Phase 4 PKI: master key(s) that encrypt university signing keys at rest. Comma-separated Fernet keys;
+# the first encrypts, all decrypt (rotation). Required when DEBUG is off, checked when a key is first used.
+PKI_MASTER_KEYS = [k for k in os.environ.get("PKI_MASTER_KEYS", "").split(",") if k.strip()]
+TESTING = "test" in sys.argv  # lets the test suite use a derived dev key (DEBUG is forced off under tests)

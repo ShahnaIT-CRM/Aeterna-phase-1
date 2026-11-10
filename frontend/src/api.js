@@ -2,6 +2,9 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api' })
 
+// For public pages (/t/:id): never sends a token, so a stale login can not trigger the redirect-to-login logic below.
+export const publicApi = axios.create({ baseURL: '/api' })
+
 api.interceptors.request.use((cfg) => {
   const token = localStorage.getItem('access')
   if (token) cfg.headers.Authorization = `Bearer ${token}`

@@ -10,8 +10,8 @@ export default function AuthPage() {
   // The landing page deep-links here: /auth?mode=register&role=institute
   const [params] = useSearchParams()
   const [mode, setMode] = useState(params.get('mode') === 'register' ? 'register' : 'login')
-  const [role, setRole] = useState(params.get('role') === 'institute' ? 'institute' : 'teacher')
-  const [f, setF] = useState({ email: '', password: '', first_name: '', last_name: '', institute_name: '' })
+  const [role, setRole] = useState(['institute', 'university'].includes(params.get('role')) ? params.get('role') : 'teacher')
+  const [f, setF] = useState({ email: '', password: '', first_name: '', last_name: '', institute_name: '', university_name: '' })
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value })
@@ -24,7 +24,7 @@ export default function AuthPage() {
     setErr('')
     try {
       const u = mode === 'login' ? await login(f.email, f.password) : await register({ ...f, role })
-      nav(u.role === 'institute' ? '/institute' : mode === 'register' ? '/profile' : '/jobs')
+      nav(u.role === 'institute' ? '/institute' : u.role === 'university' ? '/university' : mode === 'register' ? '/profile' : '/jobs')
     } catch (x) {
       setErr(x?.response?.status === 401 ? 'Email or password is incorrect.' : errMsg(x))
     } finally {
@@ -56,8 +56,8 @@ export default function AuthPage() {
         {mode === 'register' && (
           <fieldset>
             <legend className="label">I am a</legend>
-            <div className="grid grid-cols-2 gap-3">
-              {[['teacher', 'Teacher / faculty'], ['institute', 'School or institute']].map(([r, t]) => (
+            <div className="grid grid-cols-3 gap-3">
+              {[['teacher', 'Teacher / faculty'], ['institute', 'School or institute'], ['university', 'University']].map(([r, t]) => (
                 <label key={r} className={`cursor-pointer rounded-md border px-3 py-2 text-center text-sm font-semibold ${role === r ? 'border-teal bg-teal text-beige' : 'border-beige-line'}`}>
                   <input type="radio" className="sr-only" name="role" checked={role === r} onChange={() => setRole(r)} />
                   {t}
@@ -75,6 +75,14 @@ export default function AuthPage() {
         )}
         {mode === 'register' && role === 'institute' && (
           <div><label className="label" htmlFor="in">Official institute name</label><input id="in" className="input" required value={f.institute_name} onChange={set('institute_name')} /></div>
+        )}
+
+        {mode === 'register' && role === 'university' && (
+          <div>
+            <label className="label" htmlFor="un">Official university name</label>
+            <input id="un" className="input" required value={f.university_name} onChange={set('university_name')} />
+            <p className="mt-1 text-xs text-teal-soft">Aeterna verifies every university before it can sign degrees.</p>
+          </div>
         )}
 
         <div><label className="label" htmlFor="em">Email</label><input id="em" type="email" className="input" required value={f.email} onChange={set('email')} autoComplete="email" /></div>
